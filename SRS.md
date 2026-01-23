@@ -1,4 +1,4 @@
-# SRS - HỆ THỐNG SO SÁNH GIÁ SẢN PHẨM THƯƠNG MẠI ĐIỆN TỬ
+# SRS - HỆ THỐNG SO SÁNH GIÁ SẢN PHẨM THƯƠNG MẠI ĐIỆN TỬ ()
 
 ## Software Requirements Specification - E-Commerce Price Comparison System
 
