@@ -2,3 +2,5 @@
 venv
 .serena
 *.parquet
+venv
+.serena
