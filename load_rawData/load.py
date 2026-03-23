@@ -1,6 +1,7 @@
 import os
 import sys
 import math
+import shutil
 from pathlib import Path
 from pyspark.conf import SparkConf
 from pyspark.context import SparkContext
@@ -39,13 +40,12 @@ def get_gcs_jar_path():
     return str(jar_path)  # Return expected path even if not found yet
 
 def create_spark_session(driver_memory_gb=8, executor_memory_gb=8, reserve_cores=1):
-    # Lấy ở trên đoạn code chạy !gcloud auth application-default login
-    credentials_location = r"C:\Users\luong\AppData\Roaming\gcloud\application_default_credentials.json" 
-
-    gcs_jar_path = r"C:\Users\luong\Documents\GitHub\BTL_BigData\load_rawData\gcs-connector-hadoop3-latest.jar"
+    # Get paths dynamically (works on local Windows and VM Linux)
+    credentials_location = str(get_credentials_location())
+    gcs_jar_path = str(get_gcs_jar_path())
 
     if not Path(credentials_location).exists():
-        raise FileNotFoundError(f"Credentials file not found: {credentials_location}")
+        raise FileNotFoundError(f"Credentials file not found: {credentials_location}\nRun: gcloud auth application-default login")
 
     if not Path(gcs_jar_path).exists():
         raise FileNotFoundError(f"GCS connector jar not found: {gcs_jar_path}")
@@ -90,7 +90,7 @@ def create_spark_session(driver_memory_gb=8, executor_memory_gb=8, reserve_cores
     print(f"Spark cores: {spark_cores}/{total_cores}")
     print(f"Driver memory: {driver_memory_gb}g, Executor memory: {executor_memory_gb}g")
     print(f"defaultParallelism={default_parallelism}, shufflePartitions={shuffle_partitions}")
-    return spark
+    return spark,sc
 
 def _estimate_output_files_from_json_size(
     json_file_path,
@@ -115,6 +115,34 @@ def _estimate_output_files_from_json_size(
     output_files = max(min_files, min(max_files, estimated_files))
     return output_files, json_size_bytes, estimated_parquet_bytes
 
+def _gcs_path_exists(gcs_path,sc):
+    path = sc._jvm.org.apache.hadoop.fs.Path(gcs_path)
+    fs = path.getFileSystem(sc._jsc.hadoopConfiguration())
+    return fs.exists(path)
+
+def clear_huggingface_cache():
+    """Remove Hugging Face Hub cache folders to free disk space."""
+    default_hf_home = Path.home() / ".cache" / "huggingface"
+    hf_home = Path(os.environ.get("HF_HOME", str(default_hf_home)))
+
+    default_hub_cache = hf_home / "hub"
+    hub_cache = Path(os.environ.get("HUGGINGFACE_HUB_CACHE", str(default_hub_cache)))
+
+    # Also check Windows default cache path if custom env vars are not set.
+    candidate_paths = {hub_cache}
+    if sys.platform == "win32":
+        candidate_paths.add(Path.home() / "AppData" / "Local" / "huggingface" / "hub")
+
+    removed_any = False
+    for cache_path in candidate_paths:
+        if cache_path.exists():
+            shutil.rmtree(cache_path)
+            print(f"Removed Hugging Face cache: {cache_path}")
+            removed_any = True
+
+    if not removed_any:
+        print("No Hugging Face cache folder found to remove.")
+
 def upload_meta_data(
     spark,
     category,
@@ -122,10 +150,15 @@ def upload_meta_data(
     estimated_compression_ratio=0.30,
     max_output_files=200,
     compression_codec="gzip",
+    clear_hf_cache=False,
 ):
     repo_id = "McAuley-Lab/Amazon-Reviews-2023"
     file_in_repo = f"raw/meta_categories/meta_{category}.jsonl"
     bronze_output_path = f"gs://amazon-reviews-lakehouse-data/bronze-zone/meta-data/{category}"
+
+    if _gcs_path_exists(bronze_output_path, spark.sparkContext):
+        print(f"Skip metadata category '{category}': output already exists at {bronze_output_path}")
+        return
 
     print(f"Uploading metadata for category: {category}")
 
@@ -173,6 +206,8 @@ def upload_meta_data(
     )
 
     print(f"Finished writing parquet to: {bronze_output_path}")
+    if clear_hf_cache:
+        clear_huggingface_cache()
 
 def upload_review_data(
     spark,
@@ -181,10 +216,15 @@ def upload_review_data(
     estimated_compression_ratio=0.30,
     max_output_files=200,
     compression_codec="gzip",
+    clear_hf_cache=False,
 ):
     repo_id = "McAuley-Lab/Amazon-Reviews-2023"
     file_in_repo = f"raw/review_categories/{category}.jsonl"
     bronze_output_path = f"gs://amazon-reviews-lakehouse-data/bronze-zone/review-data/{category}"
+
+    if _gcs_path_exists(bronze_output_path, spark.sparkContext):
+        print(f"Skip review category '{category}': output already exists at {bronze_output_path}")
+        return
 
     print(f"Uploading review data for category: {category}")
 
@@ -232,8 +272,28 @@ def upload_review_data(
     )
 
     print(f"Finished writing parquet to: {bronze_output_path}")
+    if clear_hf_cache:
+        clear_huggingface_cache()
 
 if __name__ == "__main__":
-    spark = create_spark_session()
-    upload_review_data(spark, category="All_Beauty")
+    spark, _ = create_spark_session()
+    # tam thoi bo Automotive
+    categories = [
+    "All_Beauty", "Amazon_Fashion", "Appliances", "Arts_Crafts_and_Sewing",
+    "Automotive","Books", "CDs_and_Vinyl", "Cell_Phones_and_Accessories",
+    "Clothing_Shoes_and_Jewelry", "Digital_Music", "Electronics", "Gift_Cards",
+    "Grocery_and_Gourmet_Food", "Health_and_Household", "Health_and_Personal_Care",
+    "Home_and_Kitchen", "Industrial_and_Scientific", "Kindle_Store",
+    "Magazine_Subscriptions", "Movies_and_TV", "Musical_Instruments",
+    "Office_Products", "Patio_Lawn_and_Garden", "Pet_Supplies", "Software",
+    "Sports_and_Outdoors", "Subscription_Boxes", "Tools_and_Home_Improvement",
+    "Toys_and_Games", "Video_Games", "Unknown"
+    ]
+    
+    for data_type in ["meta", "review"]:
+        for category in categories:
+            if data_type == "meta":
+                upload_meta_data(spark, category, compression_codec="gzip",clear_hf_cache=True)
+            else:
+                upload_review_data(spark, category, compression_codec="gzip", clear_hf_cache=True)
 
