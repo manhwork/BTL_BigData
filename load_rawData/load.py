@@ -276,7 +276,7 @@ def upload_review_data(
         clear_huggingface_cache()
 
 if __name__ == "__main__":
-    spark, _ = create_spark_session()
+    spark, _ = create_spark_session(driver_memory_gb=10, executor_memory_gb=10,reserve_cores=1)
     # tam thoi bo Automotive
     categories = [
     "All_Beauty", "Amazon_Fashion", "Appliances", "Arts_Crafts_and_Sewing",
