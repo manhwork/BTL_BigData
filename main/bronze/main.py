@@ -1,11 +1,11 @@
 import argparse
 
-from main.bronze.ingest import BronzeIngestionService
-from main.bronze.models import BronzeIngestionRequest
+from main.bronze.bronze_service import BronzeIngestionRequest, BronzeService
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run Bronze ingestion via legacy Spark pipeline.")
+    parser = argparse.ArgumentParser(description="Run Bronze operations via legacy Spark pipeline.")
+    parser.add_argument("action", choices=["ingest", "read"])
     parser.add_argument("--dataset-type", choices=["meta", "review"], required=True)
     parser.add_argument("--category", required=True)
     parser.add_argument("--driver-memory-gb", type=int, default=10)
@@ -27,11 +27,19 @@ def main() -> None:
         compression_codec=args.compression_codec,
         clear_hf_cache=args.clear_hf_cache,
     )
-    result = BronzeIngestionService().ingest(request)
-    print(
-        f"Bronze ingestion completed: dataset_type={result.dataset_type}, "
-        f"category={result.category}, output={result.bronze_output_path}"
-    )
+
+    service = BronzeService()
+    if args.action == "ingest":
+        result = service.ingest(request)
+        print(
+            f"Bronze ingestion completed: dataset_type={result.dataset_type}, "
+            f"category={result.category}, output={result.bronze_output_path}"
+        )
+        return
+
+    result = service.read(request)
+    print(f"Bronze read completed: path={result.bronze_path}")
+    result.dataframe.show(5, truncate=False)
 
 
 if __name__ == "__main__":
